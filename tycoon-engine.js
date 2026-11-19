@@ -276,21 +276,21 @@ out+='<text x="210" y="'+(H-11)+'" text-anchor="middle" fill="#91a9b6" font-size
 return out;
 }
 function stationCard(id){
-const c=city(id),level=S.stations[id]?.level||0;
-return '<div class="block"><div class="blockhead"><div><strong>'+c.name+'</strong><small>'+c.pop*1000+' Einwohner · Industrie '+c.industry+'</small></div><span class="tag '+(level?'green':'')+'">'+(level?'Stufe '+level:'nicht erschlossen')+'</span></div>'+
-(level?stationDiagram(level)+'<p>'+((level+1)*2)+' nutzbare Bahnsteig-/Betriebsgleise (vereinfacht). Maximal '+(6+level*4)+' Fahrten/Tag pro Bahnhof; Ausbau erhöht auch die Nachfrage.</p><div class="actionbar">'+BUTTON('upgrade-station',id,'Bahnhof ausbauen · '+money(16000*level),level>=4)+'</div>':'<p>Baue eine anschließende Strecke, um den Bahnhof freizuschalten.</p>')+'</div>';
+const c=city(id),level=S.stations[id]?.level||0,won=regionWon(id);
+return '<div class="block"><div class="blockhead"><div><strong>'+c.name+'</strong><small>'+c.pop*1000+' Einwohner · Industrie '+c.industry+'</small></div><span class="tag '+(won?'green':'')+'">'+(level?'Stufe '+level:won?'Kachel freigeschaltet':'Kachel gesperrt')+'</span></div>'+
+(level?stationDiagram(level)+'<p>'+((level+1)*2)+' nutzbare Bahnsteig-/Betriebsgleise (vereinfacht). Maximal '+(6+level*4)+' Fahrten/Tag pro Bahnhof; Ausbau erhöht auch die Nachfrage.</p><div class="actionbar">'+BUTTON('upgrade-station',id,'Bahnhof ausbauen · '+money(16000*level),level>=4)+'</div>':won?'<p>Baue eine anschließende Strecke, um den Bahnhof zu erschließen.</p>':'<p>Diese Gebietskachel ist gesperrt. Gewinne zuerst die Ausschreibung.</p>'+BUTTON('go-tenders',id,'🏆 Zur Ausschreibung'))+'</div>';
 }
 function trackCard(id){
-const e=edge(id),t=S.tracks[id],accessible=linked(e),cost=costEdge(e);
+const e=edge(id),t=S.tracks[id],accessible=linked(e),unlocked=regionWon(e.a)&&regionWon(e.b),cost=costEdge(e);
 let h='<div class="block"><div class="blockhead"><div><strong>'+city(e.a).name+' – '+city(e.b).name+'</strong><small>'+e.km+' km · '+(t?(t.double?'zweigleisig':'eingleisig'):'nicht gebaut')+'</small></div><span class="tag '+(t?'green':'')+'">'+(t?'In Betrieb':'Bauprojekt')+'</span></div>';
-if(!t)return h+'<p>Neue Strecke einschließlich Anschluss an das bestehende Netz.</p>'+BUTTON('build',id,'Strecke bauen · '+money(cost),!accessible)+'</div>';
+if(!t)return h+'<p>'+(unlocked?'Neue Strecke einschließlich Anschluss an das bestehende Netz.':'🔒 Zuerst die Ausschreibungen beider Gebietskacheln gewinnen.')+'</p>'+BUTTON('build',id,'Strecke bauen · '+money(cost),!accessible||!unlocked)+'</div>';
 h+='<div class="pills"><span>Blocksignale '+t.signals+'/3</span><span>'+(t.electric?'⚡ elektrifiziert':'Dieselbetrieb')+'</span><span>Kapazität '+edgeCapacity(id)+'/Tag</span><span>Zustand '+Math.round(t.condition)+'%</span></div>';
 h+='<div class="actionbar">'+BUTTON('up-double',id,'2. Gleis · '+money(e.km*1600),t.double)+BUTTON('up-electric',id,'⚡ Oberleitung · '+money(e.km*1150),t.electric)+BUTTON('up-signals',id,'Blocksignale · 14.000 €',t.signals>=3)+BUTTON('up-repair',id,'Instandsetzen',t.condition>=99)+'</div></div>';
 return h;
 }
 function networkPanel(){
 let info=selected.type==='track'?trackCard(selected.id):selected.type==='city'?stationCard(selected.id):selected.type==='line'?lineCard(S.lines.find(l=>l.id===selected.id)):null;
-return '<div class="layout"><div class="worldblock"><div class="maphead"><div><h2>Deine Eisenbahnwelt</h2><p class="sub">Strecken bauen, Bahnhöfe erschließen und Zugverkehr verfolgen. Ziehen zum Verschieben, +/− zum Zoomen.</p></div><div class="actionbar">'+BUTTON('zoom-in',0,'+')+BUTTON('zoom-out',0,'−')+BUTTON('zoom-reset',0,'Übersicht')+'</div></div><svg id="world" viewBox="'+[viewBox.x,viewBox.y,viewBox.w,viewBox.h].join(' ')+'" role="img" aria-label="Ausbaubares Eisenbahnnetz"><g id="worldStatic"></g><g id="worldTrains"></g></svg><div class="legend"><span class="dot green"></span> Betrieb <span class="dot amber"></span> Neubau möglich <span class="dot gray"></span> Späterer Ausbau <span class="dot cyan"></span> Zugfahrt</div></div>'+
+return '<div class="layout"><div class="worldblock"><div class="maphead"><div><h2>Deine Eisenbahnwelt</h2><p class="sub">Strecken bauen, Bahnhöfe erschließen und Zugverkehr verfolgen. Ziehen zum Verschieben, +/− zum Zoomen.</p></div><div class="actionbar">'+BUTTON('zoom-in',0,'+')+BUTTON('zoom-out',0,'−')+BUTTON('zoom-reset',0,'Übersicht')+'</div></div><svg id="world" viewBox="'+[viewBox.x,viewBox.y,viewBox.w,viewBox.h].join(' ')+'" role="img" aria-label="Ausbaubares Eisenbahnnetz"><g id="worldStatic"></g><g id="worldTrains"></g></svg><div class="legend"><span class="dot green"></span> Kachel freigeschaltet <span class="dot amber"></span> Bewerbung läuft <span class="dot gray"></span> Kachel gesperrt <span class="dot cyan"></span> Zugfahrt</div></div>'+
 '<aside class="inspector"><h2>Betriebsdetails</h2>'+(info||'Wähle einen Bahnhof oder eine Strecke auf der Karte.')+'<h3>Aktive Linien</h3><div class="compactlist">'+S.lines.map(l=>'<div class="tinyline" data-pick="line" data-id="'+l.id+'">🚆 '+escapeHtml(l.name)+'</div>').join('')+'</div></aside></div>';
 }
 function lineCard(l){
@@ -311,9 +311,20 @@ return '<div class="sectionhead"><h2>Fuhrpark & Beschaffung</h2><p>Wähle passen
 '<div class="vehiclegrid">'+Object.entries(TRAINS).map(([id,t])=>'<article class="vehicle"><div class="vehicleicon">'+t.icon+'</div><h3>'+t.name+'</h3><p>'+t.fuel+' · '+t.speed+' km/h · '+(t.kind==='G'?'Ladung':'Plätze')+' '+t.seats+'</p><p class="sub">Betrieb: '+t.costKm+' €/km · Wartung '+money(t.maintenance)+'/Tag</p>'+BUTTON('buy-train',id,'Kaufen · '+money(t.price),S.money<t.price,'primary')+'</article>').join('')+'</div>'+
 '<h2>Dein Bestand · '+S.fleet.length+' Fahrzeuge</h2><div class="vehiclegrid">'+S.fleet.map(t=>{const def=TRAINS[t.model],assigned=S.lines.find(l=>l.vehicle===t.id);return '<article class="vehicle"><h3>'+def.icon+' #'+t.id+' · '+def.name+'</h3><p>Technischer Zustand: <b>'+Math.round(t.condition)+' %</b></p><div class="meter"><span style="width:'+Math.round(t.condition)+'%"></span></div><p class="sub">'+(assigned?'Eingesetzt auf '+escapeHtml(assigned.name):'Frei verfügbar')+'</p><div class="actionbar">'+BUTTON('repair-train',t.id,'Wartung',t.condition>=100)+BUTTON('sell-train',t.id,'Verkaufen',!!assigned)+'</div></article>';}).join('')+'</div>';
 }
+function regionTenderCard(c){
+ const won=regionWon(c.id),pending=S.regionBids.find(b=>b.id===c.id),minimum=regionReserve(c.id);
+ return '<article class="block"><div class="blockhead"><div><strong>'+escapeHtml(c.name)+'</strong><small>Gebietskachel · '+c.pop*1000+' Einwohner · Industrie '+c.industry+'</small></div><span class="tag '+(won?'green':'')+'">'+(won?'🏆 Gewonnen':pending?'⏳ Bewerbung läuft':'🔒 Gesperrt')+'</span></div>'+
+ (won?'<p>Die Bau- und Betriebsrechte sind dauerhaft freigeschaltet. Du kannst hier Strecken bauen, sobald ein Anschluss besteht.</p>':
+ pending?'<p>Gebot '+money(pending.offer)+' eingereicht. Zuschlagsentscheidung beim nächsten Betriebstag.</p>':
+ '<p>Gewinne diese regionale Infrastruktur-Ausschreibung, um die Kachel freizuschalten. Höhere Gebote verbessern die Zuschlagschance; bei Zuschlag wird das Gebot bezahlt, bei Ablehnung nur die Teilnahmegebühr.</p>'+
+ '<form class="formgrid regionBid" data-region="'+c.id+'"><label>Dein Gebot (€)<input name="offer" type="number" min="'+minimum+'" max="300000" step="500" value="'+minimum+'" required></label><label>Teilnahmegebühr<input value="'+money(REGION_BID_FEE)+'" disabled></label><button class="primary" type="submit">🏆 Angebot einreichen</button></form>')+'</article>';
+}
+function tendersPanel(){
+ return '<div class="sectionhead"><h2>🏆 Regionale Ausschreibungen & Kacheln</h2><p>Nur gewonnene Gebiete werden auf der Karte freigeschaltet. Gewinne die Ausschreibung, dann verbinde die neue Region mit deinem Netz. Bereits gebaute Bestandsregionen bleiben erhalten. Zuschlagsentscheidungen erfolgen am nächsten Betriebstag und sind nicht garantiert.</p><p><strong>'+S.regionWins.length+' von '+CITIES.length+' Gebietskacheln freigeschaltet</strong> · '+S.regionBids.length+' offene Bewerbungen</p></div><div class="twocol"><div class="pane"><h3>Noch nicht gewonnene Regionen</h3>'+CITIES.filter(c=>!regionWon(c.id)).map(regionTenderCard).join('')+'</div><div class="pane"><h3>Deine gewonnenen Regionen</h3>'+CITIES.filter(c=>regionWon(c.id)).map(regionTenderCard).join('')+'</div></div>';
+}
 function constructionPanel(){
 const candidates=TRACKS.filter(e=>!S.tracks[e.id]&&linked(e));
-return '<div class="sectionhead"><h2>Infrastruktur bauen</h2><p>Entwickle dein Netz in neue Regionen. Jedes neue Streckensegment erschließt den Zielbahnhof; bestehende Strecken lassen sich verdoppeln, elektrifizieren und mit Blocksignalen verbessern.</p></div><div class="twocol"><div class="pane"><h3>Erschließbare Strecken</h3>'+candidates.map(e=>trackCard(e.id)).join('')+'</div><div class="pane"><h3>Bestehende Infrastruktur</h3>'+TRACKS.filter(e=>ownedEdge(e.id)).map(e=>trackCard(e.id)).join('')+'<h3>Bahnhofsausbau</h3>'+CITIES.filter(c=>S.stations[c.id]).map(c=>stationCard(c.id)).join('')+'</div></div>';
+return '<div class="sectionhead"><h2>Infrastruktur bauen</h2><p>Gewinne zuerst die Gebietskacheln per Ausschreibung. Danach kannst du neue Strecken bauen und angeschlossene Bahnhöfe erschließen. Bestehende Strecken lassen sich verdoppeln, elektrifizieren und mit Blocksignalen verbessern.</p></div><div class="twocol"><div class="pane"><h3>Erschließbare Strecken</h3>'+candidates.map(e=>trackCard(e.id)).join('')+'</div><div class="pane"><h3>Bestehende Infrastruktur</h3>'+TRACKS.filter(e=>ownedEdge(e.id)).map(e=>trackCard(e.id)).join('')+'<h3>Bahnhofsausbau</h3>'+CITIES.filter(c=>S.stations[c.id]).map(c=>stationCard(c.id)).join('')+'</div></div>';
 }
 function financePanel(){
 const f=S.finance.slice(0,10),max=Math.max(1,...f.map(x=>Math.max(x.revenue,x.cost))),bar=f.slice().reverse().map((v,i)=>{const h1=v.revenue/max*115,h2=v.cost/max*115,x=20+i*61;return '<rect x="'+x+'" y="'+(135-h1)+'" width="20" height="'+h1+'" fill="#56c69d"/><rect x="'+(x+22)+'" y="'+(135-h2)+'" width="20" height="'+h2+'" fill="#d98d65"/><text x="'+(x+20)+'" y="151" font-size="10" text-anchor="middle" fill="#b7cbd5">'+v.day+'</text>';}).join('');
@@ -321,12 +332,18 @@ return '<div class="sectionhead"><h2>Finanzen & Unternehmensziele</h2><p>Investi
 }
 function render(){
 $('stats').innerHTML=stats();$('day').textContent='Tag '+S.day+' abschließen ▶';
-const viewRoot=$('viewRoot');viewRoot.innerHTML=({world:networkPanel,lines:linesPanel,fleet:fleetPanel,build:constructionPanel,finance:financePanel}[view]||networkPanel)();
+const viewRoot=$('viewRoot');viewRoot.innerHTML=({world:networkPanel,lines:linesPanel,fleet:fleetPanel,build:constructionPanel,tenders:tendersPanel,finance:financePanel}[view]||networkPanel)();
 if(view==='world'){drawWorld();}document.querySelectorAll('[data-view]').forEach(el=>{el.classList.toggle('active',el.dataset.view===view);el.setAttribute('aria-pressed',String(el.dataset.view===view));});
 }
 function drawWorld(){
 const g=$('worldStatic');if(!g)return;let h='';
 h+='<defs><pattern id="bggrid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0 H0 V40" fill="none" stroke="#29414d" stroke-width=".65"/></pattern></defs><rect width="1180" height="680" fill="#13232d"/><rect width="1180" height="680" fill="url(#bggrid)"/>';
+for(const tile of REGION_TILES){
+ const won=regionWon(tile.id),pending=S.regionBids.some(b=>b.id===tile.id);
+ const fill=won?'#174b41':pending?'#5e462a':'#382b35',stroke=won?'#69d9ad':pending?'#f0c173':'#9d7880';
+ h+='<g data-inspect="city" data-id="'+tile.id+'" class="regionTile"><title>'+escapeHtml(city(tile.id).name)+' · '+(won?'freigeschaltet':pending?'Bewerbung läuft':'gesperrt')+'</title><rect x="'+tile.x+'" y="'+tile.y+'" width="'+tile.w+'" height="'+tile.h+'" rx="13" fill="'+fill+'" fill-opacity="'+(won?'.41':'.6')+'" stroke="'+stroke+'" stroke-opacity=".83" stroke-width="2" '+(won?'':'stroke-dasharray="8 7"')+'/>'+
+ '<text x="'+(tile.x+12)+'" y="'+(tile.y+22)+'" fill="'+stroke+'" font-size="11" font-weight="800">'+(won?'✓ FREIGESCHALTET':pending?'⏳ BEWORBEN':'🔒 GESPERRT')+'</text></g>';
+}
 for(const e of TRACKS){
 const a=city(e.a),b=city(e.b),owned=S.tracks[e.id],accessible=linked(e),dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy),nx=-dy/len,ny=dx/len;
 const selectedEdge=selected.type==='track'&&selected.id===e.id;
@@ -396,9 +413,10 @@ case 'repair-train':repairTrain(Number(id));break;case 'sell-train':sellTrain(Nu
 case 'line-plus':adjustLine(Number(id),1);break;case 'line-minus':adjustLine(Number(id),-1);break;
 case 'fare-plus':changeFare(Number(id),.02);break;case 'fare-minus':changeFare(Number(id),-.02);break;
 case 'delete-line':deleteLine(Number(id));break;case 'claim':claimGoal(id);break;
+case 'go-tenders':setView('tenders');break;
 case 'zoom-in':setZoom(.78);break;case 'zoom-out':setZoom(1.3);break;case 'zoom-reset':resetZoom();break;
 }});
-document.addEventListener('submit',ev=>{if(ev.target.id==='lineForm'){ev.preventDefault();addLine(ev.target);}else if(ev.target.matches('.lineSchedule')){ev.preventDefault();updateTimetable(Number(ev.target.dataset.line),ev.target.elements.start.value,ev.target.elements.headway.value);}});
+document.addEventListener('submit',ev=>{if(ev.target.id==='lineForm'){ev.preventDefault();addLine(ev.target);}else if(ev.target.matches('.lineSchedule')){ev.preventDefault();updateTimetable(Number(ev.target.dataset.line),ev.target.elements.start.value,ev.target.elements.headway.value);}else if(ev.target.matches('.regionBid')){ev.preventDefault();bidForRegion(ev.target.dataset.region,ev.target.elements.offer.value);}});
 $('day').addEventListener('click',performDay);$('save').addEventListener('click',()=>{persist();showNotice('Tycoon-Spielstand lokal gespeichert.');});
 $('reset').addEventListener('click',()=>{if(!confirm('Deinen Tycoon-Spielstand wirklich neu beginnen?'))return;S=newGame();view='world';selected={type:'track',id:'nt'};persist();render();showNotice('Neues Unternehmen gegründet.');});
 $('speed').addEventListener('click',()=>{playSpeed=playSpeed===1?4:playSpeed===4?0:1;$('speed').textContent=playSpeed===0?'▶ Zugvorschau':playSpeed===1?'⏩ 4× Vorschau':'⏸ Vorschau';});
