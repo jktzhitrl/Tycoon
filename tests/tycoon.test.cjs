@@ -28,7 +28,7 @@ function model(rand=0){
 }
 test('Standalone app has valid syntax and the correct script',()=>{
  assert.doesNotThrow(()=>new Function(engine));
- assert.match(html,/src="\.\/tycoon-engine\.js\?v=2\.3"/);
+ assert.match(html,/src="\.\/tycoon-engine\.js\?v=2\.4"/);
  assert.match(html,/https:\/\/jktzhitrl\.github\.io\/stellwerk\.sim\//);
 });
 test('Original stations and Tycoon game data are retained',()=>{
@@ -183,4 +183,89 @@ test('SVG map paints every region and switches its visual state after winning',(
  assert.match(group(paint.updated,'waldheim'),/FREIGESCHALTET/);
  assert.match(group(paint.updated,'altheim'),/BEWORBEN/);
  assert.match(group(paint.updated,'neustadt'),/FREIGESCHALTET/);
+});
+
+
+test('Tycoon uses the real railway-map-style base with ten geographic concession tiles',()=>{
+ assert.match(html,/unpkg\.com\/leaflet@1\.9\.4\/dist\/leaflet\.css/);
+ assert.match(html,/unpkg\.com\/leaflet@1\.9\.4\/dist\/leaflet\.js/);
+ assert.match(engine,/id="geoWorld"/);
+ assert.match(engine,/tile\.openstreetmap\.org/);
+ assert.match(engine,/tiles\.openfreemap\.org\/styles\/bright/);
+ assert.match(engine,/tiles\.openrailwaymap\.org/);
+ assert.match(engine,/function initGeographicMap\(\)/);
+ assert.match(engine,/if\(view==='world'\)\{initGeographicMap\(\);\}/);
+ assert.match(engine,/if\(geoMap\)geoTrainPreview\(\)/);
+ assert.match(engine,/Tycoon-Strecken sind fiktive Spielverbindungen/);
+});
+test('Every geographic tile has a valid non-overlapping local map rectangle',()=>{
+ const source=section('const GEO_WORLD=','function networkPanel(){');
+ const bounds=new Function(constants+
+  source+
+  'return {tiles:REGION_TILES.map(t=>({id:t.id,bounds:regionGeoBounds(t)})),range:GEO_WORLD,project:gameToGeo};')();
+ assert.equal(bounds.tiles.length,10);
+ const ids=new Set();
+ for(const {id,bounds:[[north,west],[south,east]]} of bounds.tiles){
+  assert.ok(!ids.has(id),'duplicate tile id '+id);
+  ids.add(id);
+  assert.ok(north>south&&west<east,'negative tile area '+id);
+  assert.ok(north<=bounds.range.north&&south>=bounds.range.south);
+  assert.ok(west>=bounds.range.west&&east<=bounds.range.east);
+ }
+ assert.deepEqual(bounds.project(0,0),[bounds.range.north,bounds.range.west]);
+ assert.deepEqual(bounds.project(1180,680),[bounds.range.south,bounds.range.east]);
+});
+test('Leaflet renders winning, pending and locked tiles and preserves tender interaction',()=>{
+ const source=section('const GEO_WORLD=','function networkPanel(){');
+ const tiles=[],layers=[];
+ const world={on(){return this;},fitBounds(){return this;},getCenter(){return [51.45,11.8];},getZoom(){return 9;},remove(){},invalidateSize(){}};
+ const tile=(bounds,opts)=>{const v={bounds,opts,events:{},addTo(){return this;},bindTooltip(){return this;},on(name,cb){this.events[name]=cb;return this;}};return v;};
+ const L={
+  map:()=>world,
+  tileLayer:(url)=>{const x=tile();x.url=url;layers.push(x);return x;},
+  control:{layers:()=>({addTo(){return this;}})},
+  rectangle:(bounds,opts)=>{const x=tile(bounds,opts);tiles.push(x);return x;},
+  polyline:(points,opts)=>tile(points,opts),
+  divIcon:opts=>opts,
+  marker:(position,opts)=>tile(position,opts),
+  layerGroup:()=>({addTo(){return this;},removeLayer(){}})
+ };
+ const els={geoWorld:{hidden:false},geoStatus:{textContent:''},world:{hidden:true}};
+ let picked='';
+ const exercise=new Function('L','els','pickedState',constants+source+
+  'let S=newGame();S.regionBids=[{id:"altheim",offer:20000,submitted:1}];'+
+  'let selected={type:"track",id:"nt"};const viewBox={x:0,y:0,w:1180,h:680};'+
+  'function $(id){return els[id];}function regionWon(id){return S.regionWins.includes(id);}' +
+  'function linked(e){return !!(S.stations[e.a]||S.stations[e.b]);}' +
+  'function networkRoute(){return null;}function lineVehicle(){return null;}' +
+  'function inspect(type,id){pickedState.push(type+":"+id);}' +
+  'function setView(id){pickedState.push("view:"+id);}' +
+  'function drawWorld(){}function requestAnimationFrame(cb){}'+
+  'initGeographicMap();return {status:els.geoStatus.textContent};'
+ );
+ const selections=[];
+ const result=exercise(L,els,selections);
+ assert.match(result.status,/OpenStreetMap/);
+ assert.equal(tiles.length,10);
+ assert.equal(layers.length,2);
+ assert.equal(tiles.filter(t=>t.opts.fillOpacity===.08).length,2);
+ assert.equal(tiles.filter(t=>t.opts.fillOpacity===.27).length,1);
+ assert.equal(tiles.filter(t=>t.opts.fillOpacity===.48).length,7);
+ const waldheim=tiles[0],neustadt=tiles[3];
+ waldheim.events.click();
+ neustadt.events.click();
+ assert.deepEqual(selections,['view:tenders','city:neustadt']);
+});
+test('When geographic tile library is missing, fallback schematics remain usable',()=>{
+ const source=section('const GEO_WORLD=','function networkPanel(){');
+ const els={geoWorld:{hidden:false},geoStatus:{textContent:''},world:{hidden:true}};
+ const state=new Function('els',constants+source+
+  'let S=newGame();function $(id){return els[id];}'+
+  'let drawn=0;function drawWorld(){drawn++;}'+
+  'initGeographicMap();return {drawn};'
+ )(els);
+ assert.equal(state.drawn,1);
+ assert.equal(els.geoWorld.hidden,true);
+ assert.equal(els.world.hidden,false);
+ assert.match(els.geoStatus.textContent,/Ersatzkarte/);
 });
