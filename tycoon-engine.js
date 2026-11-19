@@ -293,7 +293,7 @@ return h;
    werden aus dem bestehenden fiktiven Tycoon-Netz projiziert. Es werden
    ausdrücklich keine realen Gleisverbindungen oder Ortslagen behauptet. */
 const GEO_WORLD={north:52.15,south:50.75,west:10.55,east:13.25};
-let geoMap=null,geoView=null,geoTrainMarkers=new Map(),geoTrainLayer=null;
+let geoMap=null,geoView=null,geoTrainMarkers=new Map(),geoTrainLayer=null,geoVectorTimeout=null;
 function gameToGeo(x,y){
  return [GEO_WORLD.north-y/680*(GEO_WORLD.north-GEO_WORLD.south),
          GEO_WORLD.west+x/1180*(GEO_WORLD.east-GEO_WORLD.west)];
@@ -302,6 +302,7 @@ function regionGeoBounds(tile){
  return [gameToGeo(tile.x,tile.y),gameToGeo(tile.x+tile.w,tile.y+tile.h)];
 }
 function clearGeographicMap(){
+ if(geoVectorTimeout!==null){clearTimeout(geoVectorTimeout);geoVectorTimeout=null;}
  if(geoMap){geoView={center:geoMap.getCenter(),zoom:geoMap.getZoom()};geoMap.remove();geoMap=null;}
  geoTrainMarkers.clear();geoTrainLayer=null;
 }
@@ -347,6 +348,31 @@ function initGeographicMap(){
   }).addTo(geoMap);
   base.on('tileload',()=>{loaded++;if(status&&status.dataset.error==='tiles'){status.dataset.error='';status.textContent='✓ Karte geladen. Kacheln durch gewonnene Ausschreibungen freischalten.';}});
   base.on('tileerror',()=>{failed++;if(failed>=4&&!loaded&&status){status.dataset.error='tiles';status.textContent='⚠ Kartenkacheln nicht erreichbar. Prüfe deine Internetverbindung; der Spielstand bleibt erhalten.';}});
+  // Gleiche farbige OpenFreeMap-Bright-Darstellung wie bei Railway Empire.
+  // Bis die Vektorkarte bereit ist, bleibt die OSM-Rasterkarte sichtbar.
+  if(L.maplibreGL&&typeof maplibregl!=='undefined'&&maplibregl.supported()){
+   const targetMap=geoMap;
+   let vector=null,ready=false,failures=0;
+   const showRaster=()=>{
+    if(geoMap!==targetMap||ready)return;
+    if(geoVectorTimeout!==null){clearTimeout(geoVectorTimeout);geoVectorTimeout=null;}
+    if(vector&&targetMap.hasLayer(vector))targetMap.removeLayer(vector);
+    if(!targetMap.hasLayer(base))base.addTo(targetMap);
+    if(status)status.textContent='Farbige Karte nicht erreichbar – OpenStreetMap-Ersatzkarte aktiv. Kacheln und Spielstand bleiben erhalten.';
+   };
+   try{
+    vector=L.maplibreGL({style:'https://tiles.openfreemap.org/styles/bright',interactive:false}).addTo(targetMap);
+    const gl=vector.getMaplibreMap();
+    geoVectorTimeout=setTimeout(showRaster,16000);
+    gl.on('error',()=>{if(++failures>=3)showRaster();});
+    gl.on('idle',()=>{
+     if(geoMap!==targetMap||ready||!gl.isStyleLoaded())return;
+     ready=true;if(geoVectorTimeout!==null){clearTimeout(geoVectorTimeout);geoVectorTimeout=null;}
+     if(targetMap.hasLayer(base))targetMap.removeLayer(base);
+     if(status)status.textContent='✓ Farbige OpenFreeMap-Karte geladen. Gewonnene Spielregionen sind grün markiert.';
+    });
+   }catch(error){showRaster();}
+  }
   const rail=L.tileLayer('https://tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png',{
    minZoom:5,maxZoom:18,maxNativeZoom:18,opacity:.55,
    attribution:'Gleisinformationen © <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a> / OSM'
@@ -385,7 +411,7 @@ function initGeographicMap(){
   geoTrainLayer=L.layerGroup().addTo(geoMap);
   geoTrainPreview();
   geoMap.on('moveend',()=>{if(geoMap)geoView={center:geoMap.getCenter(),zoom:geoMap.getZoom()};});
-  if(status)status.textContent='OpenStreetMap-Karte mit farbigen Gebiets-Kacheln. Spielregionen und Linien sind fiktiv; zuschaltbare Gleise stammen aus OpenRailwayMap.';
+  if(status)status.textContent='Lade farbige Karte · OpenStreetMap als Ersatz. Spielregionen und Linien sind fiktiv; zuschaltbare Gleise aus OpenRailwayMap.';
   requestAnimationFrame(()=>{if(geoMap)geoMap.invalidateSize();});
  }catch(err){
   if(geoMap){geoMap.remove();geoMap=null;}
