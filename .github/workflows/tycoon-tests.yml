@@ -1,0 +1,28 @@
+name: Tycoon automated regression tests
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tycoon-engine.js'
+      - 'index.html'
+      - 'tests/**'
+      - '.github/workflows/tycoon-tests.yml'
+  pull_request:
+    paths:
+      - 'tycoon-engine.js'
+      - 'index.html'
+      - 'tests/**'
+      - '.github/workflows/tycoon-tests.yml'
+  workflow_dispatch:
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run Tycoon tests
+        run: node --test tests/tycoon.test.cjs
