@@ -12,22 +12,23 @@ function section(start,end){
  return engine.slice(from,to);
 }
 const constants=section('const CITIES=[','function migrate(');
+const migrations=section('function migrate(','let S=loadGame()');
 const routing=section('function networkRoute(','function availableTrains(');
 const operations=section('function availableTrains(','const GOALS=[');
-function model(){
- return new Function(constants+
- 'let S=newGame();let worldTime=390;let notice="";'+
- 'function ownedEdge(id){return !!S.tracks[id];}'+
+function model(rand=0){
+ return new Function('rand',constants+migrations+
+ 'const Math=Object.create(globalThis.Math);Math.random=()=>rand;let S=newGame();let worldTime=390;let selected={type:"track",id:"nt"};let notice="";'+
+ 'function ownedEdge(id){return !!S.tracks[id];}function linked(e){return !!(S.stations[e.a]||S.stations[e.b]);}function costEdge(e){return e.km*2450+18000;}function spend(n){if(S.money<n)return false;S.money-=n;return true;}'+
  'function showNotice(msg){notice=msg;}'+
  'function log(msg){S.log.unshift(msg);}'+
  'function persist(){}function render(){}'+
  routing+operations+
- 'return {get S(){return S;},get notice(){return notice;},networkRoute,timetableDepartures,timetableTurnaroundMinutes,updateTimetable,performDay};'
- )();
+ 'return {get S(){return S;},get notice(){return notice;},networkRoute,timetableDepartures,timetableTurnaroundMinutes,updateTimetable,performDay,regionWon,regionReserve,regionBidChance,bidForRegion,resolveRegionBids,buildTrack,normalizeRegions};'
+ )(rand);
 }
 test('Standalone app has valid syntax and the correct script',()=>{
  assert.doesNotThrow(()=>new Function(engine));
- assert.match(html,/src="\.\/tycoon-engine\.js\?v=2\.2"/);
+ assert.match(html,/src="\.\/tycoon-engine\.js\?v=2\.3"/);
  assert.match(html,/https:\/\/jktzhitrl\.github\.io\/stellwerk\.sim\//);
 });
 test('Original stations and Tycoon game data are retained',()=>{
@@ -77,4 +78,88 @@ test('Timetable editor and animation share the planned departures',()=>{
  assert.match(engine,/timetableDepartures\(l\)\.map\(fmtTime\)/);
  assert.match(engine,/const depart=departures\[k\]/);
  assert.match(engine,/updateTimetable\(Number\(ev\.target\.dataset\.line\)/);
+});
+
+
+test('Region tiles initially unlock only the starter network',()=>{
+ const m=model();
+ assert.deepEqual([...m.S.regionWins].sort(),['neustadt','teutschenthal']);
+ assert.equal(m.regionWon('waldheim'),false);
+ assert.equal(m.S.regionBids.length,0);
+ assert.match(engine,/const REGION_TILES=\[/);
+ assert.match(engine,/GESPERRT/);
+ assert.match(html,/data-view="tenders"/);
+});
+
+test('Track construction is blocked until both regions have been won',()=>{
+ const m=model();
+ const money=m.S.money;
+ m.buildTrack('nw');
+ assert.equal(m.S.tracks.nw,undefined);
+ assert.equal(m.S.stations.waldheim,undefined);
+ assert.equal(m.S.money,money);
+ assert.match(m.notice,/Baurecht fehlt/);
+});
+
+test('Winning a regional tender unlocks the tile and enables construction',()=>{
+ const m=model(0);
+ const reserve=m.regionReserve('waldheim');
+ const starting=m.S.money;
+ assert.equal(m.bidForRegion('waldheim',reserve),true);
+ assert.equal(m.S.money,starting-900);
+ assert.equal(m.S.regionBids.length,1);
+ assert.equal(m.regionWon('waldheim'),false);
+ assert.equal(m.bidForRegion('waldheim',reserve),false);
+ m.performDay();
+ assert.equal(m.S.regionBids.length,0);
+ assert.equal(m.regionWon('waldheim'),true);
+ assert.equal(m.S.regionWins.filter(x=>x==='waldheim').length,1);
+ m.buildTrack('nw');
+ assert.ok(m.S.tracks.nw);
+ assert.ok(m.S.stations.waldheim);
+ assert.ok(m.networkRoute('neustadt','waldheim'));
+});
+
+test('Losing a regional tender keeps the tile locked and permits another bid',()=>{
+ const m=model(.999);
+ const reserve=m.regionReserve('waldheim');
+ assert.equal(m.bidForRegion('waldheim',reserve),true);
+ m.performDay();
+ assert.equal(m.regionWon('waldheim'),false);
+ assert.equal(m.S.regionBids.length,0);
+ assert.equal(m.bidForRegion('waldheim',reserve),true);
+});
+
+test('Tender validation blocks invalid cities, bids and insufficient money',()=>{
+ const m=model();
+ assert.equal(m.bidForRegion('not-a-city',15000),false);
+ assert.equal(m.bidForRegion('neustadt',15000),false);
+ assert.equal(m.bidForRegion('hafenau',1000),false);
+ m.S.money=500;
+ assert.equal(m.bidForRegion('hafenau',m.regionReserve('hafenau')),false);
+ assert.equal(m.S.regionBids.length,0);
+ assert.equal(m.S.money,500);
+});
+
+test('Existing built stations and tracks remain unlocked during migration',()=>{
+ const m=model();
+ const legacy=m.S;
+ delete legacy.regionWins;delete legacy.regionBids;
+ legacy.stations.burgstadt={level:2};
+ legacy.tracks.tb={double:false,electric:false,signals:0,condition:100};
+ const migrated=m.normalizeRegions(legacy);
+ assert.ok(migrated.regionWins.includes('burgstadt'));
+ assert.ok(migrated.regionWins.includes('teutschenthal'));
+ assert.equal(migrated.regionWins.length,3);
+ assert.deepEqual(migrated.regionBids,[]);
+});
+
+test('Newly won regions remain awarded in normalized saved games',()=>{
+ const m=model();
+ m.S.regionWins.push('waldheim');
+ const saved=JSON.parse(JSON.stringify(m.S));
+ assert.ok(m.normalizeRegions(saved).regionWins.includes('waldheim'));
+ assert.match(engine,/tenders:tendersPanel/);
+ assert.match(engine,/regionBid/);
+ assert.match(engine,/if\(!regionWon\(e\.a\)\|\|!regionWon\(e\.b\)\)/);
 });
