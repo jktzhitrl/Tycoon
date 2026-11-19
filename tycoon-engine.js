@@ -29,6 +29,12 @@ const TRACKS=[
 {id:'eb',a:'eisleben',b:'burgstadt',km:35},
 {id:'ta',a:'teutschenthal',b:'altheim',km:30}
 ];
+const REGION_TILES=[
+{id:'waldheim',x:65,y:5,w:343,h:192},{id:'altheim',x:414,y:5,w:367,h:192},{id:'talburg',x:787,y:5,w:385,h:192},
+{id:'neustadt',x:5,y:204,w:246,h:231},{id:'teutschenthal',x:257,y:204,w:278,h:231},
+{id:'burgstadt',x:541,y:204,w:336,h:231},{id:'hafenau',x:883,y:204,w:290,h:231},
+{id:'roeblingen',x:24,y:443,w:363,h:232},{id:'eisleben',x:393,y:443,w:369,h:232},{id:'sangerhausen',x:768,y:443,w:402,h:232}
+];
 const TRAINS={
 diesel:{name:'BR 642 · Dieseltriebwagen',kind:'P',price:68000,seats:100,speed:110,costKm:5.8,maintenance:190,fuel:'Diesel',icon:'🚃'},
 regional:{name:'BR 442 · Regionaltriebzug',kind:'P',price:119000,seats:190,speed:160,costKm:4.8,maintenance:290,fuel:'Elektro',icon:'🚆'},
@@ -47,7 +53,7 @@ stations:{neustadt:{level:1},teutschenthal:{level:1}},
 tracks:{nt:{double:false,electric:true,signals:1,condition:100}},
 fleet:[{id:1,model:'diesel',condition:100},{id:2,model:'regional',condition:100}],
 lines:[{id:1,name:'RE 1 · Neustadt – Teutschenthal',from:'neustadt',to:'teutschenthal',vehicle:2,trips:3,fare:0.28}],
-serial:3,claimed:[],passengers:0,freight:0,kmBuilt:32,finance:[],
+serial:3,claimed:[],regionWins:['neustadt','teutschenthal'],regionBids:[],passengers:0,freight:0,kmBuilt:32,finance:[],
 log:['Unternehmen gegründet. Eigene Strecke Neustadt–Teutschenthal in Betrieb.']};}
 function migrate(old){let s=newGame();if(old&&old.v===1&&Number.isFinite(old.money)){
 s.money=old.money;s.day=Math.max(1,old.day||1);s.reputation=old.reputation||72;
@@ -57,7 +63,20 @@ for(let i=2;i<Math.min(15,old.trains||2);i++)s.fleet.push({id:s.serial++,model:'
 s.lines[0].trips=Math.max(1,Math.min(6,old.services||3));
 s.log.unshift('Bisherigen Tycoon-Spielstand übernommen.');}
 return s;}
-function loadGame(){try{const a=JSON.parse(localStorage.getItem(SAVE_KEY)||'null');if(a&&a.version===2&&a.tracks&&a.stations&&Array.isArray(a.fleet)&&Array.isArray(a.lines))return a;const b=JSON.parse(localStorage.getItem(OLD_KEY)||'null');return migrate(b);}catch(e){return newGame();}}
+// Vorhandene Infrastruktur gewaehrt Altspielstaenden Bestandsschutz fuer ihre Gebiete.
+function normalizeRegions(s){
+ const wins=new Set(['neustadt','teutschenthal',...(Array.isArray(s.regionWins)?s.regionWins:[])]);
+ for(const id of Object.keys(s.stations||{}))if(city(id))wins.add(id);
+ for(const id of Object.keys(s.tracks||{})){const track=edge(id);if(track){wins.add(track.a);wins.add(track.b);}}
+ s.regionWins=[...wins].filter(id=>!!city(id));
+ const pending=new Set();
+ s.regionBids=(Array.isArray(s.regionBids)?s.regionBids:[]).filter(b=>{
+  if(!b||!city(b.id)||wins.has(b.id)||pending.has(b.id)||!Number.isInteger(b.offer)||b.offer<regionReserve(b.id)||b.offer>300000)return false;
+  pending.add(b.id);return true;
+ });
+ return s;
+}
+function loadGame(){try{const a=JSON.parse(localStorage.getItem(SAVE_KEY)||'null');if(a&&a.version===2&&a.tracks&&a.stations&&Array.isArray(a.fleet)&&Array.isArray(a.lines))return normalizeRegions(a);const b=JSON.parse(localStorage.getItem(OLD_KEY)||'null');return normalizeRegions(migrate(b));}catch(e){return newGame();}}
 let S=loadGame(),view='world',selected={type:'track',id:'nt'},worldTime=390,playSpeed=1,viewBox={x:0,y:0,w:1180,h:680},lastFrame=0,drag=null,noticeTimer=null;
 function persist(){try{localStorage.setItem(SAVE_KEY,JSON.stringify(S));return true;}catch(e){showNotice('Speicherplatz erschöpft – bitte Browserdaten prüfen.');return false;}}
 function log(s){S.log.unshift('Tag '+S.day+' · '+s);S.log=S.log.slice(0,45);}
@@ -104,6 +123,40 @@ function updateTimetable(id,startText,headwayText){
  persist();render();return true;
 }
 
+// Regionale Bau- und Betreiberkonzessionen: Freischaltung ausschliesslich durch Zuschlag.
+const REGION_BID_FEE=900;
+function regionWon(id){return S.regionWins.includes(id);}
+function regionReserve(id){const c=city(id);return c?Math.ceil((9000+c.pop*55+c.industry*22)/500)*500:Infinity;}
+function regionBidChance(id,offer){const reserve=regionReserve(id);
+ return Math.max(8,Math.min(92,35+S.reputation*.25+(offer-reserve)/reserve*50));
+}
+function bidForRegion(id,amount){
+ const c=city(id),offer=Number(amount);
+ if(!c||regionWon(id)){showNotice('Diese Region ist bereits freigeschaltet oder nicht vorhanden.');return false;}
+ if(S.regionBids.some(b=>b.id===id)){showNotice('Fuer diese Region liegt bereits ein Angebot vor.');return false;}
+ if(!Number.isSafeInteger(offer)||offer<regionReserve(id)||offer>300000){showNotice('Bitte ein gueltiges Gebot ueber dem Mindestwert eingeben.');return false;}
+ if(S.money<offer+REGION_BID_FEE){showNotice('Du brauchst das Gebot und die Teilnahmegebuehr als verfuegbares Kapital.');return false;}
+ if(!spend(REGION_BID_FEE))return false;
+ S.regionBids.push({id,offer,submitted:S.day});
+ log('Ausschreibung '+c.name+': '+money(offer)+' geboten, '+money(REGION_BID_FEE)+' Teilnahmegebuehr.');
+ persist();render();showNotice('Angebot fuer '+c.name+' eingereicht. Entscheidung am naechsten Betriebstag.');
+ return true;
+}
+function resolveRegionBids(){
+ let won=0,lost=0;
+ const open=S.regionBids.splice(0);
+ for(const b of open){
+  const c=city(b.id);
+  if(!c||regionWon(b.id)||!Number.isInteger(b.offer)||b.offer<regionReserve(b.id)||b.offer>300000)continue;
+  if(Number.isInteger(b.submitted)&&b.submitted>=S.day){S.regionBids.push(b);continue;}
+  if(S.money<b.offer){lost++;log('Ausschreibung '+c.name+': Kapital zur Zuschlagserteilung nicht verfuegbar.');continue;}
+  if(Math.random()*100>=regionBidChance(b.id,b.offer)){lost++;log('Ausschreibung '+c.name+': kein Zuschlag. Bei der naechsten Runde erneut bieten.');continue;}
+  if(!spend(b.offer)){lost++;continue;}
+  S.regionWins.push(b.id);S.reputation=Math.min(100,S.reputation+2);won++;
+  log('🏆 Zuschlag '+c.name+'! Gebietskachel freigeschaltet, '+money(b.offer)+' Konzessionsentgelt gezahlt.');
+ }
+ return {won,lost};
+}
 function availableTrains(){return S.fleet.filter(t=>!S.lines.some(l=>l.vehicle===t.id));}
 function lineVehicle(l){return S.fleet.find(x=>x.id===l.vehicle);}
 function trainMaxTrips(train,km){const t=TRAINS[train.model];return Math.max(1,Math.min(8,Math.floor(1100/(Math.max(50,km*2/t.speed*60)+50))));}
@@ -112,6 +165,7 @@ function routeIsElectric(route){return route.edges.every(id=>S.tracks[id].electr
 function validateLine(from,to,vehicleId){const route=networkRoute(from,to),veh=S.fleet.find(v=>v.id===vehicleId);if(!route||!route.edges.length)return 'Es gibt keine befahrbare Verbindung zwischen diesen Bahnhöfen.';if(!veh)return 'Bitte einen vorhandenen Zug auswählen.';if(S.lines.some(l=>l.vehicle===vehicleId))return 'Der Zug ist bereits einer Linie zugeteilt.';if(TRAINS[veh.model].fuel==='Elektro'&&!routeIsElectric(route))return 'Die ganze Strecke muss für diesen Zug elektrifiziert sein.';return null;}
 function buildTrack(id){
 const e=edge(id);if(!e||ownedEdge(id)||!linked(e))return showNotice('Neue Strecken müssen an dein vorhandenes Netz anschließen.');
+if(!regionWon(e.a)||!regionWon(e.b))return showNotice('Baurecht fehlt: Gewinne zuerst die Ausschreibungen für beide Gebietskacheln.');
 const cost=costEdge(e);if(!spend(cost))return;
 S.tracks[id]={double:false,electric:false,signals:0,condition:100};S.stations[e.a]??={level:1};S.stations[e.b]??={level:1};S.kmBuilt+=e.km;
 log('Neubaustrecke '+city(e.a).name+' – '+city(e.b).name+' ('+e.km+' km) eröffnet.');selected={type:'track',id};persist();render();
@@ -185,7 +239,7 @@ cost+=fixed;const net=Math.round(revenue-cost);
 S.money+=net;S.passengers+=passengers;S.freight+=freight;S.reputation=Math.max(0,Math.min(100,S.reputation+(cancelled?Math.max(-7,-cancelled*2):1)+(event.name==='Großveranstaltung'?1:0)));
 S.finance.unshift({day,revenue:Math.round(revenue),cost:Math.round(cost),profit:net,passengers,freight,cancelled,event:event.name});S.finance=S.finance.slice(0,24);
 log(event.name+': '+summary.reduce((x,l)=>x+l.done,0)+' Fahrten, '+cancelled+' Ausfälle, Tagesergebnis '+money(net)+'.');
-S.day++;worldTime=360;showNotice('Tag '+day+': '+event.name+' · Ergebnis '+money(net)+' · '+cancelled+' ausgefallene Fahrten.');persist();render();
+S.day++;const awarded=resolveRegionBids();worldTime=360;showNotice('Tag '+day+': '+event.name+' · Ergebnis '+money(net)+' · '+cancelled+' ausgefallene Fahrten.'+(awarded.won?' 🏆 '+awarded.won+' Region(en) gewonnen!':''));persist();render();
 }
 const GOALS=[
 {id:'line3',name:'Drei Linien betreiben',desc:'3 aktive Linien',reward:48000,check:()=>S.lines.length>=3},
