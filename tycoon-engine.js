@@ -77,7 +77,7 @@ function normalizeRegions(s){
  return s;
 }
 function loadGame(){try{const a=JSON.parse(localStorage.getItem(SAVE_KEY)||'null');if(a&&a.version===2&&a.tracks&&a.stations&&Array.isArray(a.fleet)&&Array.isArray(a.lines))return normalizeRegions(a);const b=JSON.parse(localStorage.getItem(OLD_KEY)||'null');return normalizeRegions(migrate(b));}catch(e){return newGame();}}
-let S=loadGame(),view='world',selected={type:'track',id:'nt'},worldTime=390,playSpeed=1,viewBox={x:0,y:0,w:1180,h:680},lastFrame=0,drag=null,noticeTimer=null;
+let S=loadGame(),view='world',selected={type:'track',id:'nt'},worldTime=365,playSpeed=1,viewBox={x:0,y:0,w:1180,h:680},lastFrame=0,drag=null,noticeTimer=null;
 function persist(){try{localStorage.setItem(SAVE_KEY,JSON.stringify(S));return true;}catch(e){showNotice('Speicherplatz erschöpft – bitte Browserdaten prüfen.');return false;}}
 function log(s){S.log.unshift('Tag '+S.day+' · '+s);S.log=S.log.slice(0,45);}
 function showNotice(t){const el=$('notice');if(el){el.textContent=t;el.hidden=false;}}
@@ -288,9 +288,116 @@ h+='<div class="pills"><span>Blocksignale '+t.signals+'/3</span><span>'+(t.elect
 h+='<div class="actionbar">'+BUTTON('up-double',id,'2. Gleis · '+money(e.km*1600),t.double)+BUTTON('up-electric',id,'⚡ Oberleitung · '+money(e.km*1150),t.electric)+BUTTON('up-signals',id,'Blocksignale · 14.000 €',t.signals>=3)+BUTTON('up-repair',id,'Instandsetzen',t.condition>=99)+'</div></div>';
 return h;
 }
+
+/* Die echte OSM-Karte ist der Hintergrund. Gebietskacheln und Spielbahnhöfe
+   werden aus dem bestehenden fiktiven Tycoon-Netz projiziert. Es werden
+   ausdrücklich keine realen Gleisverbindungen oder Ortslagen behauptet. */
+const GEO_WORLD={north:52.15,south:50.75,west:10.55,east:13.25};
+let geoMap=null,geoView=null,geoTrainMarkers=new Map(),geoTrainLayer=null;
+function gameToGeo(x,y){
+ return [GEO_WORLD.north-y/680*(GEO_WORLD.north-GEO_WORLD.south),
+         GEO_WORLD.west+x/1180*(GEO_WORLD.east-GEO_WORLD.west)];
+}
+function regionGeoBounds(tile){
+ return [gameToGeo(tile.x,tile.y),gameToGeo(tile.x+tile.w,tile.y+tile.h)];
+}
+function clearGeographicMap(){
+ if(geoMap){geoView={center:geoMap.getCenter(),zoom:geoMap.getZoom()};geoMap.remove();geoMap=null;}
+ geoTrainMarkers.clear();geoTrainLayer=null;
+}
+function geoTrainPreview(){
+ if(!geoMap||!geoTrainLayer)return;
+ const wanted=new Set();
+ for(const l of S.lines){
+  const route=networkRoute(l.from,l.to),v=lineVehicle(l);
+  if(!v||!route||!route.edges.length||TRAINS[v.model].fuel==='Elektro'&&!routeIsElectric(route))continue;
+  const def=TRAINS[v.model],departures=timetableDepartures(l);
+  for(let i=0;i<Math.min(l.trips,trainMaxTrips(v,route.km));i++){
+   const depart=departures[i],duration=route.km/def.speed*60+8,elapsed=worldTime-depart;
+   if(elapsed<0||elapsed>duration)continue;
+   const id=l.id+':'+i,at=coordsOnRoute(route,elapsed/duration),geo=gameToGeo(at.x,at.y);
+   wanted.add(id);
+   let marker=geoTrainMarkers.get(id);
+   if(!marker){
+    const icon=L.divIcon({className:'',html:'<div class="geo-train" role="img" aria-label="Zug">🚆</div>',iconSize:[37,37],iconAnchor:[18,18]});
+    marker=L.marker(geo,{icon,zIndexOffset:800}).addTo(geoTrainLayer).bindTooltip(l.name+' · Abfahrt '+fmtTime(depart));
+    geoTrainMarkers.set(id,marker);
+   }else marker.setLatLng(geo);
+  }
+ }
+ for(const [key,marker] of geoTrainMarkers)if(!wanted.has(key)){geoTrainLayer.removeLayer(marker);geoTrainMarkers.delete(key);}
+}
+function initGeographicMap(){
+ const el=$('geoWorld'),status=$('geoStatus');
+ if(!el)return;
+ if(typeof L==='undefined'){
+  el.hidden=true;
+  if($('world'))$('world').hidden=false;
+  if(status)status.textContent='Kartenbibliothek nicht erreichbar. Schematische Ersatzkarte aktiv.';
+  drawWorld();return;
+ }
+ try{
+  geoMap=L.map(el,{zoomControl:true,preferCanvas:true,scrollWheelZoom:false,zoomSnap:.25});
+  const worldBounds=[gameToGeo(0,680),gameToGeo(1180,0)];
+  if(geoView)geoMap.setView(geoView.center,geoView.zoom);
+  else geoMap.fitBounds(worldBounds,{padding:[24,24]});
+  let loaded=0,failed=0;
+  const base=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{
+   minZoom:5,maxZoom:18,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap-Mitwirkende</a>'
+  }).addTo(geoMap);
+  base.on('tileload',()=>{loaded++;if(status&&status.dataset.error==='tiles'){status.dataset.error='';status.textContent='✓ Karte geladen. Kacheln durch gewonnene Ausschreibungen freischalten.';}});
+  base.on('tileerror',()=>{failed++;if(failed>=4&&!loaded&&status){status.dataset.error='tiles';status.textContent='⚠ Kartenkacheln nicht erreichbar. Prüfe deine Internetverbindung; der Spielstand bleibt erhalten.';}});
+  const rail=L.tileLayer('https://tiles.openrailwaymap.org/standard/{z}/{x}/{y}.png',{
+   minZoom:5,maxZoom:18,maxNativeZoom:18,opacity:.55,
+   attribution:'Gleisinformationen © <a href="https://www.openrailwaymap.org/">OpenRailwayMap</a> / OSM'
+  });
+  L.control.layers({}, {'Gleise (OpenRailwayMap)':rail},{collapsed:true,position:'topright'}).addTo(geoMap);
+  for(const tile of REGION_TILES){
+   const won=regionWon(tile.id),pending=S.regionBids.some(b=>b.id===tile.id);
+   const color=won?'#0d9767':pending?'#c99237':'#ad5367',statusText=won?'freigeschaltet':pending?'Bewerbung läuft':'gesperrt';
+   const rect=L.rectangle(regionGeoBounds(tile),{
+    color,weight:2,dashArray:won?null:'7 7',
+    fillColor:won?'#21a66f':pending?'#dfaa54':'#542837',fillOpacity:won?.08:pending?.27:.48
+   }).addTo(geoMap);
+   rect.bindTooltip(city(tile.id).name+' · '+statusText,{direction:'center',sticky:true});
+   rect.on('click',()=>{if(won)inspect('city',tile.id);else{selected={type:'city',id:tile.id};setView('tenders');}});
+  }
+  for(const e of TRACKS){
+   const a=city(e.a),b=city(e.b),built=!!S.tracks[e.id],
+    eligible=regionWon(e.a)&&regionWon(e.b)&&linked(e),
+    highlight=selected.type==='track'&&selected.id===e.id;
+   const poly=L.polyline([gameToGeo(a.x,a.y),gameToGeo(b.x,b.y)],{
+    color:built?(highlight?'#ffdd91':'#2684b7'):eligible?'#d3a04c':'#62666a',
+    weight:built?highlight?7:5:2,opacity:built?1:eligible?.85:.42,
+    dashArray:built?null:'6 7'
+   }).addTo(geoMap);
+   poly.bindTooltip(a.name+' – '+b.name+(built?' · in Betrieb':eligible?' · Neubau möglich':' · gesperrt'));
+   poly.on('click',()=>inspect('track',e.id));
+  }
+  for(const c of CITIES){
+   const won=regionWon(c.id),owned=!!S.stations[c.id];
+   const icon=L.divIcon({className:'',html:'<div class="geo-station '+(owned?'owned':won?'':'locked')+'">'+
+     escapeHtml(c.name)+(owned?' ✓':won?'':' 🔒')+'</div>',iconSize:[140,28],iconAnchor:[70,14]});
+   L.marker(gameToGeo(c.x,c.y),{icon,zIndexOffset:500}).addTo(geoMap)
+    .bindTooltip(c.name+' · '+(won?'Kachel freigeschaltet':'Kachel gesperrt'))
+    .on('click',()=>{if(won)inspect('city',c.id);else{selected={type:'city',id:c.id};setView('tenders');}});
+  }
+  geoTrainLayer=L.layerGroup().addTo(geoMap);
+  geoTrainPreview();
+  geoMap.on('moveend',()=>{if(geoMap)geoView={center:geoMap.getCenter(),zoom:geoMap.getZoom()};});
+  if(status)status.textContent='OpenStreetMap-Karte mit farbigen Gebiets-Kacheln. Spielregionen und Linien sind fiktiv; zuschaltbare Gleise stammen aus OpenRailwayMap.';
+  requestAnimationFrame(()=>{if(geoMap)geoMap.invalidateSize();});
+ }catch(err){
+  if(geoMap){geoMap.remove();geoMap=null;}
+  el.hidden=true;if($('world'))$('world').hidden=false;
+  if(status)status.textContent='Interaktive Karte nicht verfügbar. Schematische Ersatzkarte aktiv.';
+  drawWorld();
+ }
+}
+
 function networkPanel(){
 let info=selected.type==='track'?trackCard(selected.id):selected.type==='city'?stationCard(selected.id):selected.type==='line'?lineCard(S.lines.find(l=>l.id===selected.id)):null;
-return '<div class="layout"><div class="worldblock"><div class="maphead"><div><h2>Deine Eisenbahnwelt</h2><p class="sub">Strecken bauen, Bahnhöfe erschließen und Zugverkehr verfolgen. Ziehen zum Verschieben, +/− zum Zoomen.</p></div><div class="actionbar">'+BUTTON('zoom-in',0,'+')+BUTTON('zoom-out',0,'−')+BUTTON('zoom-reset',0,'Übersicht')+'</div></div><svg id="world" viewBox="'+[viewBox.x,viewBox.y,viewBox.w,viewBox.h].join(' ')+'" role="img" aria-label="Ausbaubares Eisenbahnnetz"><g id="worldStatic"></g><g id="worldTrains"></g></svg><div class="legend"><span class="dot green"></span> Kachel freigeschaltet <span class="dot amber"></span> Bewerbung läuft <span class="dot gray"></span> Kachel gesperrt <span class="dot cyan"></span> Zugfahrt</div></div>'+
+return '<div class="layout"><div class="worldblock"><div class="maphead"><div><h2>Deine Eisenbahnwelt</h2><p class="sub">Reale OpenStreetMap-Karte mit deinen gewonnenen Gebietskacheln. Die Tycoon-Strecken sind fiktive Spielverbindungen. Tippe auf eine Kachel oder Strecke, um sie auszuwählen.</p></div><div class="actionbar">'+BUTTON('zoom-in',0,'+')+BUTTON('zoom-out',0,'−')+BUTTON('zoom-reset',0,'Übersicht')+'</div></div><div id="geoWorld" role="region" aria-label="Interaktive OpenStreetMap-Karte mit freischaltbaren Gebietskacheln"></div><p id="geoStatus" class="geo-status" role="status" aria-live="polite">Lade Landkarte …</p><svg id="world" hidden viewBox="'+[viewBox.x,viewBox.y,viewBox.w,viewBox.h].join(' ')+'" role="img" aria-label="Ausbaubares Eisenbahnnetz"><g id="worldStatic"></g><g id="worldTrains"></g></svg><div class="legend"><span class="dot green"></span> Kachel freigeschaltet <span class="dot amber"></span> Bewerbung läuft <span class="dot gray"></span> Kachel gesperrt <span class="dot cyan"></span> Zugfahrt</div></div>'+
 '<aside class="inspector"><h2>Betriebsdetails</h2>'+(info||'Wähle einen Bahnhof oder eine Strecke auf der Karte.')+'<h3>Aktive Linien</h3><div class="compactlist">'+S.lines.map(l=>'<div class="tinyline" data-pick="line" data-id="'+l.id+'">🚆 '+escapeHtml(l.name)+'</div>').join('')+'</div></aside></div>';
 }
 function lineCard(l){
@@ -332,8 +439,8 @@ return '<div class="sectionhead"><h2>Finanzen & Unternehmensziele</h2><p>Investi
 }
 function render(){
 $('stats').innerHTML=stats();$('day').textContent='Tag '+S.day+' abschließen ▶';
-const viewRoot=$('viewRoot');viewRoot.innerHTML=({world:networkPanel,lines:linesPanel,fleet:fleetPanel,build:constructionPanel,tenders:tendersPanel,finance:financePanel}[view]||networkPanel)();
-if(view==='world'){drawWorld();}document.querySelectorAll('[data-view]').forEach(el=>{el.classList.toggle('active',el.dataset.view===view);el.setAttribute('aria-pressed',String(el.dataset.view===view));});
+const viewRoot=$('viewRoot');clearGeographicMap();viewRoot.innerHTML=({world:networkPanel,lines:linesPanel,fleet:fleetPanel,build:constructionPanel,tenders:tendersPanel,finance:financePanel}[view]||networkPanel)();
+if(view==='world'){initGeographicMap();}document.querySelectorAll('[data-view]').forEach(el=>{el.classList.toggle('active',el.dataset.view===view);el.setAttribute('aria-pressed',String(el.dataset.view===view));});
 }
 function drawWorld(){
 const g=$('worldStatic');if(!g)return;let h='';
@@ -388,15 +495,15 @@ h+='<g class="trainSprite" transform="translate('+point.x.toFixed(1)+' '+point.y
 }
 layer.innerHTML=h;
 }
-function setZoom(f){const nw=Math.max(300,Math.min(1180,viewBox.w*f)),nh=nw*680/1180;
+function setZoom(f){if(geoMap){if(f<1)geoMap.zoomIn();else geoMap.zoomOut();return;}const nw=Math.max(300,Math.min(1180,viewBox.w*f)),nh=nw*680/1180;
 viewBox.x=Math.max(0,Math.min(1180-nw,viewBox.x+(viewBox.w-nw)/2));viewBox.y=Math.max(0,Math.min(680-nh,viewBox.y+(viewBox.h-nh)/2));viewBox.w=nw;viewBox.h=nh;const g=$('world');if(g)g.setAttribute('viewBox',[viewBox.x,viewBox.y,viewBox.w,viewBox.h].join(' '));}
-function resetZoom(){viewBox={x:0,y:0,w:1180,h:680};setZoom(1);}
+function resetZoom(){if(geoMap){geoMap.fitBounds([gameToGeo(0,680),gameToGeo(1180,0)],{padding:[24,24]});return;}viewBox={x:0,y:0,w:1180,h:680};setZoom(1);}
 function inspect(type,id){selected={type,id:type==='line'?Number(id):id};render();}
 function tick(t){
 if(!lastFrame)lastFrame=t;const dt=Math.min(.06,(t-lastFrame)/1000);lastFrame=t;
-if(playSpeed){worldTime+=dt*playSpeed*35;if(worldTime>1340)worldTime=360;}
+if(playSpeed){worldTime+=dt*playSpeed*3;if(worldTime>1340)worldTime=360;}
 const time=$('clock');if(time)time.textContent=fmtTime(worldTime);
-if(view==='world')drawMovingTrains();requestAnimationFrame(tick);
+if(view==='world'){if(geoMap)geoTrainPreview();else drawMovingTrains();}requestAnimationFrame(tick);
 }
 function boot(){
 render();persist();
