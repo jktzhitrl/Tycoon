@@ -163,3 +163,24 @@ test('Newly won regions remain awarded in normalized saved games',()=>{
  assert.match(engine,/regionBid/);
  assert.match(engine,/if\(!regionWon\(e\.a\)\|\|!regionWon\(e\.b\)\)/);
 });
+
+
+test('SVG map paints every region and switches its visual state after winning',()=>{
+ const painting=section('function drawWorld(){','function coordsOnRoute(');
+ const paint=new Function(constants+
+ 'let S=newGame();const selected={type:"track",id:"nt"};const viewBox={x:0,y:0,w:1180,h:680};'+
+ 'const elements={worldStatic:{innerHTML:""},world:{setAttribute(){}},worldTrains:{innerHTML:""}};'+
+ 'function $(id){return elements[id];}function linked(e){return !!(S.stations[e.a]||S.stations[e.b]);}'+
+ 'function ownedEdge(id){return !!S.tracks[id];}function regionWon(id){return S.regionWins.includes(id);}'+
+ 'function drawMovingTrains(){}'+painting+
+ 'drawWorld();const locked=elements.worldStatic.innerHTML;'+
+ 'S.regionWins.push("waldheim");S.regionBids.push({id:"altheim",offer:16000,submitted:1});'+
+ 'drawWorld();return {locked,updated:elements.worldStatic.innerHTML};'
+ )();
+ const group=(markup,id)=>markup.match(new RegExp('<g data-inspect="city" data-id="'+id+'" class="regionTile"[\\s\\S]*?<\\/g>'))?.[0]||'';
+ assert.equal((paint.locked.match(/class="regionTile"/g)||[]).length,10);
+ assert.match(group(paint.locked,'waldheim'),/GESPERRT/);
+ assert.match(group(paint.updated,'waldheim'),/FREIGESCHALTET/);
+ assert.match(group(paint.updated,'altheim'),/BEWORBEN/);
+ assert.match(group(paint.updated,'neustadt'),/FREIGESCHALTET/);
+});
