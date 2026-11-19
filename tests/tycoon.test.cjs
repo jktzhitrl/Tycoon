@@ -28,7 +28,7 @@ function model(rand=0){
 }
 test('Standalone app has valid syntax and the correct script',()=>{
  assert.doesNotThrow(()=>new Function(engine));
- assert.match(html,/src="\.\/tycoon-engine\.js\?v=2\.3"/);
+ assert.match(html,/src="\.\/tycoon-engine\.js\?v=2\.4"/);
  assert.match(html,/https:\/\/jktzhitrl\.github\.io\/stellwerk\.sim\//);
 });
 test('Original stations and Tycoon game data are retained',()=>{
@@ -189,8 +189,9 @@ test('SVG map paints every region and switches its visual state after winning',(
 test('Tycoon uses the real railway-map-style base with ten geographic concession tiles',()=>{
  assert.match(html,/unpkg\.com\/leaflet@1\.9\.4\/dist\/leaflet\.css/);
  assert.match(html,/unpkg\.com\/leaflet@1\.9\.4\/dist\/leaflet\.js/);
- assert.match(html,/id="geoWorld"/);
+ assert.match(engine,/id="geoWorld"/);
  assert.match(engine,/tile\.openstreetmap\.org/);
+ assert.match(engine,/tiles\.openfreemap\.org\/styles\/bright/);
  assert.match(engine,/tiles\.openrailwaymap\.org/);
  assert.match(engine,/function initGeographicMap\(\)/);
  assert.match(engine,/if\(view==='world'\)\{initGeographicMap\(\);\}/);
