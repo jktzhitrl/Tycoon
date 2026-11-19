@@ -91,7 +91,7 @@ function timetableTurnaroundMinutes(vehicle,route){
 function updateTimetable(id,startText,headwayText){
  const l=S.lines.find(x=>x.id===id);
  if(!l)return false;
- const match=/^([01]\\d|2[0-3]):([0-5]\\d)$/.exec(startText);
+ const match=/^([01]\d|2[0-3]):([0-5]\d)$/.exec(startText);
  const headway=Number(headwayText),start=match?Number(match[1])*60+Number(match[2]):NaN;
  if(!match||!Number.isInteger(headway)||headway<30||headway>480||start<300||start>1260){
   showNotice('Bitte eine erste Abfahrt zwischen 05:00 und 21:00 Uhr und einen Takt von 30–480 Minuten eingeben.');return false;
